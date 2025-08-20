@@ -30,13 +30,26 @@ def complex_dot(z1, z2):
     return np.real(z1) * np.real(z2) + np.imag(z1) * np.imag(z2)
 
 
-def plot_input_output(
+def get_complex_hsv(array: np.ndarray, scale: float):
+    """Return HSV values with the angle corresponding to hue, value with
+    magnitude, and saturation at 1."""
+    thetas = np.angle(array)
+    radius = np.abs(array)
+
+    H = (thetas % (2 * np.pi)) / (2 * np.pi)
+    S = np.ones_like(thetas)
+    V = (radius / scale) ** 0.25
+    hsv = np.stack((H, S, V), axis=-1)
+    return hsv
+
+
+def plot_colormap(
     cv_func: Callable,
     domain: tuple[np.complex128] = (-1 - 1j, 1 + 1j),
     num_samples=100,
 ) -> None:
-    """Plot a colored scatter plot depicting the color coded input space and
-    the resulting plot of where those points map to.
+    """Plot the resulting phase and magnitude of the output function using an
+    HSV color scale where hue maps to phase and value maps to magnitude.
 
     Args:
         cv_func: a function that takes an array of complex valued inputs
@@ -45,47 +58,106 @@ def plot_input_output(
         num_samples: the number of points to sample along the rectangular grid
     """
     input_grid = get_complex_grid(domain, num_samples)
-    input_thetas = np.angle(input_grid)
-    input_radius = np.abs(input_grid)
-
-    H = (input_thetas % (2 * np.pi)) / (2 * np.pi)
-    S = np.ones_like(input_thetas)
-    V = input_radius / np.max(input_radius)
-    hsv = np.dstack((H, S, V))
-
-    rgb = clr.hsv_to_rgb(hsv)
-
     output_grid = cv_func(input_grid)
 
+    scale = max(np.max(np.abs(output_grid)), np.max(np.abs(input_grid)))
+    input_hsv = get_complex_hsv(input_grid, scale)
+    output_hsv = get_complex_hsv(output_grid, scale)
+
     fig, axs = plt.subplots(ncols=2)
-    fig.suptitle("Complex Function Transformation")
-    axs[0].scatter(
-        input_grid.ravel().real, input_grid.ravel().imag, c=rgb.reshape(-1, 3)
+    fig.suptitle("Phase-Hue Mag-Value")
+    axs[0].imshow(
+        clr.hsv_to_rgb(input_hsv),
+        origin="lower",
+        aspect="equal",
+        extent=(*np.real(domain), *np.imag(domain)),
     )
     axs[0].set_aspect("equal")
-    axs[0].set_xlabel("Real")
-    axs[0].set_ylabel("Imag")
-    axs[0].set_title("Inputs")
+    axs[0].set_xlabel("Real Input")
+    axs[0].set_ylabel("Imag Input")
+    axs[0].set_title("Input Space")
 
-    axs[1].scatter(
-        output_grid.ravel().real, output_grid.ravel().imag, c=rgb.reshape(-1, 3)
+    axs[1].imshow(
+        clr.hsv_to_rgb(output_hsv),
+        origin="lower",
+        aspect="equal",
+        extent=(*np.real(domain), *np.imag(domain)),
     )
     axs[1].set_aspect("equal")
-    axs[1].set_xlabel("Real")
-    axs[1].set_ylabel("Imag")
-    axs[1].set_title("Outputs")
-
-    min_x_lim = min(axs[0].get_xlim()[0], axs[1].get_xlim()[0])
-    max_x_lim = max(axs[0].get_xlim()[1], axs[1].get_xlim()[1])
-    min_y_lim = min(axs[0].get_ylim()[0], axs[1].get_ylim()[0])
-    max_y_lim = max(axs[0].get_ylim()[1], axs[1].get_ylim()[1])
-    axs[0].set_xlim([min_x_lim, max_x_lim])
-    axs[1].set_xlim([min_x_lim, max_x_lim])
-    axs[0].set_ylim([min_y_lim, max_y_lim])
-    axs[1].set_ylim([min_y_lim, max_y_lim])
+    axs[1].set_xlabel("Real Input")
+    axs[1].set_ylabel("Imag Input")
+    axs[1].set_title("Output Space")
 
     axs[0].grid(True)
     axs[1].grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_3d_colormap(
+    cv_func: Callable, domain: tuple[np.complex128], max_mag=None, num_samples=100
+):
+    input_grid = get_complex_grid(domain, num_samples)
+    output_grid = cv_func(input_grid)
+
+    scale = max(np.max(np.abs(output_grid)), np.max(np.abs(input_grid)))
+    input_hsv = get_complex_hsv(input_grid, scale)
+    output_hsv = get_complex_hsv(output_grid, scale)
+
+    fig = plt.figure()
+    fig.suptitle("Phase-Hue Mag-Value/Height")
+    ax_scale = fig.add_subplot(1, 2, 1)
+    ax_output = fig.add_subplot(1, 2, 2, projection="3d")
+
+    ax_scale.imshow(
+        clr.hsv_to_rgb(input_hsv),
+        origin="lower",
+        aspect="equal",
+        extent=(*np.real(domain), *np.imag(domain)),
+    )
+    ax_scale.set_aspect("equal")
+    ax_scale.set_xlabel("Real Input")
+    ax_scale.set_ylabel("Imag Input")
+    ax_scale.set_title("Input Space")
+
+    ax_output.plot_surface(
+        np.real(input_grid),
+        np.imag(input_grid),
+        np.abs(output_grid),
+        facecolors=clr.hsv_to_rgb(output_hsv),
+    )
+    ax_output.set_aspect("equal")
+    ax_output.set_xlabel("Real Input")
+    ax_output.set_ylabel("Imag Input")
+    ax_output.set_zlabel("Magnitude Output")
+    ax_output.set_title("Output")
+
+    if max_mag is not None:
+        ax_output.set_zlim(0, max_mag)
+
+    # Add snaps
+    targets = [(90, -90)]  # XY  # XZ  # YZ
+
+    def snap_view(event):
+        if event.name == "button_release_event":
+            elev, azim = ax_output.elev, ax_output.azim
+            for te, ta in targets:
+                if abs(elev - te) < 10:
+                    ax_output.view_init(te, ta)
+                    ax_output.set_proj_type("ortho")
+                    fig.canvas.draw_idle()
+                    break
+        if (
+            event.name == "button_press_event"
+            and event.inaxes == ax_output
+            and event.button == 1
+        ):
+            ax_output.set_proj_type("persp")
+            fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("button_release_event", snap_view)
+    fig.canvas.mpl_connect("button_press_event", snap_view)
 
     plt.tight_layout()
     plt.show()
@@ -396,11 +468,15 @@ def plot_real_tube(
 if __name__ == "__main__":
 
     def example_func(z: np.complex128) -> np.complex128:
-        return (z + 1) / (z - 2)
+        # return (z + 1) / (z - 2)
+        # return np.sin(z)
+        return np.exp(z)
 
-    domain = (-3 - 30j, 5 + 30j)
+    domain = (-3 - 10j, 5 + 5j)
+    domain = (-2 - 2j, 2 + 2j)
     range = (-5 - 5j, 5 + 5j)
-    # plot_input_output(example_func, domain)
+    # plot_colormap(example_func, domain)
+    plot_3d_colormap(example_func, domain)
     # plot_real_imag(example_func, (-10 - 10j, 10 + 10j))
     # plot_slice(example_func)
-    plot_real_tube(example_func, domain, range)
+    # plot_real_tube(example_func, domain, range)
