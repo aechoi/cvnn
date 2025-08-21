@@ -46,7 +46,7 @@ def get_complex_hsv(array: np.ndarray, scale: float):
 def plot_colormap(
     cv_func: Callable,
     domain: tuple[np.complex128] = (-1 - 1j, 1 + 1j),
-    num_samples=100,
+    num_samples=20,
 ) -> None:
     """Plot the resulting phase and magnitude of the output function using an
     HSV color scale where hue maps to phase and value maps to magnitude.
@@ -96,7 +96,7 @@ def plot_colormap(
 
 
 def plot_3d_colormap(
-    cv_func: Callable, domain: tuple[np.complex128], max_mag=None, num_samples=100
+    cv_func: Callable, domain: tuple[np.complex128], max_mag=None, num_samples=20
 ):
     input_grid = get_complex_grid(domain, num_samples)
     output_grid = cv_func(input_grid)
@@ -164,30 +164,51 @@ def plot_3d_colormap(
 
 
 def plot_real_imag(
-    cv_func: Callable, domain: tuple[np.complex128] = (-1 - 1j, 1 + 1j), num_samples=100
+    cv_func: Callable, domain: tuple[np.complex128] = (-1 - 1j, 1 + 1j), num_samples=20
 ):
     input_grid = get_complex_grid(domain, num_samples)
     output_grid = cv_func(input_grid)
 
-    fig, axs = plt.subplots(ncols=2, subplot_kw={"projection": "3d"})
-    axs[0].plot_surface(np.real(input_grid), np.imag(input_grid), np.real(output_grid))
-    axs[0].set_xlabel("Real")
-    axs[0].set_ylabel("Imag")
-    axs[0].set_zlabel("Real Output")
+    vmin = min(np.real(output_grid).min(), np.imag(output_grid).min())
+    vmax = max(np.real(output_grid).max(), np.imag(output_grid).max())
+    norm = clr.Normalize(vmin=vmin, vmax=vmax)
+    cmap = cm.coolwarm
 
-    axs[1].plot_surface(np.real(input_grid), np.imag(input_grid), np.imag(output_grid))
-    axs[1].set_xlabel("Real")
-    axs[1].set_ylabel("Imag")
-    axs[1].set_zlabel("Real Output")
+    fig, axs = plt.subplots(ncols=2, subplot_kw={"projection": "3d"})
+    fig.suptitle("Separate Real and Imaginary Surfaces")
+    axs[0].plot_surface(
+        np.real(input_grid),
+        np.imag(input_grid),
+        np.real(output_grid),
+        facecolors=cmap(norm(np.real(output_grid))),
+    )
+    axs[0].set_xlabel("Real Input")
+    axs[0].set_ylabel("Imag Input")
+    axs[0].set_zlabel("Real Output")
+    axs[0].set_title("Real Component")
+
+    axs[1].plot_surface(
+        np.real(input_grid),
+        np.imag(input_grid),
+        np.imag(output_grid),
+        facecolors=cmap(norm(np.imag(output_grid))),
+    )
+    axs[1].set_xlabel("Real Input")
+    axs[1].set_ylabel("Imag Input")
+    axs[1].set_zlabel("Imag Output")
+    axs[1].set_title("Imag Component")
+
+    axs[0].set_zlim([vmin, vmax])
+    axs[1].set_zlim([vmin, vmax])
 
     def sync_views(event):
         if event.inaxes == axs[0]:
-            elev, azim = axs[0].elev, axs[0].azim
-            axs[1].view_init(elev, azim)
+            elev, azim, roll = axs[0].elev, axs[0].azim, axs[0].roll
+            axs[1].view_init(elev, azim, roll)
             fig.canvas.draw_idle()
         elif event.inaxes == axs[1]:
-            elev, azim = axs[1].elev, axs[1].azim
-            axs[0].view_init(elev, azim)
+            elev, azim, roll = axs[1].elev, axs[1].azim, axs[1].roll
+            axs[0].view_init(elev, azim, roll)
             fig.canvas.draw_idle()
 
     fig.canvas.mpl_connect("motion_notify_event", sync_views)
@@ -196,10 +217,10 @@ def plot_real_imag(
 
 @dataclass
 class ViewSegment:
-    cross_width = 5
-    view_direction = 1j
-    travel = 0
-    num_samples = 100
+    cross_width: float = 5
+    view_direction: np.complex128 = 1j
+    travel: float = 0
+    num_samples: int = 100
 
     def __post_init__(self):
         self.colors = np.vstack(
@@ -233,19 +254,36 @@ class ViewSegment:
         return np.linspace(*self.end_points, self.num_samples)
 
 
-def plot_slice(cv_func: Callable):
+def plot_slice(
+    cv_func: Callable,
+    domain: tuple[np.complex128] = (-1 - 1j, 1 + 1j),
+    range: tuple[np.complex128] = (-1 - 1j, 1 + 1j),
+    num_samples: int = 20,
+):
     """Plot the 3D slice of the output"""
+    input_grid = get_complex_grid(domain, num_samples)
+    output_grid = cv_func(input_grid)
+
+    scale = max(np.max(np.abs(output_grid)), np.max(np.abs(input_grid)))
+    output_hsv = get_complex_hsv(output_grid, scale)
+
     fig = plt.figure()
     ax_dir = fig.add_subplot(1, 2, 1)
     ax_line = fig.add_subplot(1, 2, 2, projection="3d")
 
-    segment = ViewSegment()
+    segment = ViewSegment(cross_width=np.abs(np.diff(domain)[0]) / 2)
 
+    ax_dir.imshow(
+        clr.hsv_to_rgb(output_hsv),
+        origin="lower",
+        aspect="equal",
+        extent=(*np.real(domain), *np.imag(domain)),
+    )
     (seg_plot,) = ax_dir.plot(np.real(segment.end_points), np.imag(segment.end_points))
     arrow = pch.FancyArrowPatch(
         (
-            np.real(segment.center - segment.norm_view_dir),
-            np.imag(segment.center - segment.norm_view_dir),
+            np.real(segment.center - segment.norm_view_dir * 0.5 * segment.cross_width),
+            np.imag(segment.center - segment.norm_view_dir * 0.5 * segment.cross_width),
         ),
         (np.real(segment.center), np.imag(segment.center)),
         mutation_scale=10,
@@ -255,8 +293,10 @@ def plot_slice(cv_func: Callable):
     )
     ax_dir.add_patch(arrow)
     ax_dir.grid(True)
-    ax_dir.set_xlim([-segment.cross_width, segment.cross_width])
-    ax_dir.set_ylim([-segment.cross_width, segment.cross_width])
+    ax_dir.set_xlabel("Real Input")
+    ax_dir.set_ylabel("Imag Input")
+    ax_dir.set_xlim(np.real(domain))
+    ax_dir.set_ylim(np.imag(domain))
     ax_dir.set_aspect("equal")
 
     outputs = cv_func(segment.samples)
@@ -275,8 +315,8 @@ def plot_slice(cv_func: Callable):
     ax_line.set_xlabel("Real Output")
     ax_line.set_ylabel("Imag Output")
     ax_line.set_zlabel("Segment")
-    ax_line.set_xlim([-1, 1])
-    ax_line.set_ylim([-1, 1])
+    ax_line.set_xlim(np.real(range))
+    ax_line.set_ylim(np.imag(range))
 
     # Interactions
     state = {"dragging": False}
@@ -288,8 +328,12 @@ def plot_slice(cv_func: Callable):
         seg_plot.set_ydata(np.imag(segment.end_points))
         arrow.set_positions(
             (
-                np.real(segment.center - segment.norm_view_dir),
-                np.imag(segment.center - segment.norm_view_dir),
+                np.real(
+                    segment.center - segment.norm_view_dir * segment.cross_width / 2
+                ),
+                np.imag(
+                    segment.center - segment.norm_view_dir * segment.cross_width / 2
+                ),
             ),
             (np.real(segment.center), np.imag(segment.center)),
         )
@@ -386,42 +430,27 @@ def plot_real_tube(
 
     fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
     cmap = plt.get_cmap("coolwarm")
-    norm = clr.AsinhNorm(
-        linear_width=10**log_min,
+
+    norm = clr.SymLogNorm(
+        linthresh=10**log_min,
         vmin=imag_sparse_domain.min(),
         vmax=imag_sparse_domain.max(),
     )
 
     for idx, line in enumerate(output_level):
-        mask = np.arange(len(line))
-        # if range is not None:
-        #     mask = (
-        #         (np.real(line) > np.real(range[0]))
-        #         & (np.real(line) < np.real(range[1]))
-        #         & (np.imag(line) > np.imag(range[0]))
-        #         & (np.imag(line) < np.imag(range[1]))
-        #     )
         ax.plot(
-            np.real(imag_lines[idx, mask]),
-            np.real(line[mask]),
-            np.imag(line[mask]),
+            np.real(imag_lines[idx]),
+            np.real(line),
+            np.imag(line),
             c="k",
             clip_on=True,
         )
     for idx, line in enumerate(output_plunge):
-        mask = np.arange(len(line))
-        # if range is not None:
-        #     mask = (
-        #         (np.real(line) > np.real(range[0]))
-        #         & (np.real(line) < np.real(range[1]))
-        #         & (np.imag(line) > np.imag(range[0]))
-        #         & (np.imag(line) < np.imag(range[1]))
-        #     )
         color = cmap(norm(imag_sparse_domain[idx]))
         ax.plot(
-            np.real(real_lines[idx, mask]),
-            np.real(line[mask]),
-            np.imag(line[mask]),
+            np.real(real_lines[idx]),
+            np.real(line),
+            np.imag(line),
             c=color,
             clip_on=True,
         )
@@ -441,12 +470,19 @@ def plot_real_tube(
 
     ax.set_aspect("equal")
 
-    targets = [(90, -90), (0, -90), (0, 0)]  # XY  # XZ  # YZ
+    targets = [(90, None), (0, -90), (0, 0)]  # XY  # XZ  # YZ
 
     def snap_view(event):
         if event.name == "button_release_event":
             elev, azim = ax.elev, ax.azim
             for te, ta in targets:
+                if abs(elev - te) < 10 and ta is None:
+                    ax.view_init(te, -90)
+                    ax.set_proj_type("ortho")
+                    fig.canvas.draw_idle()
+                    break
+                if ta is None:
+                    continue
                 if abs(elev - te) < 10 and abs(azim - ta) < 10:
                     ax.view_init(te, ta)
                     ax.set_proj_type("ortho")
@@ -469,14 +505,14 @@ if __name__ == "__main__":
 
     def example_func(z: np.complex128) -> np.complex128:
         # return (z + 1) / (z - 2)
-        # return np.sin(z)
-        return np.exp(z)
+        return np.sin(z)
+        # return np.exp(z)
+        # return z**2
 
-    domain = (-3 - 10j, 5 + 5j)
-    domain = (-2 - 2j, 2 + 2j)
+    domain = (-5 - 2j, 5 + 2j)
     range = (-5 - 5j, 5 + 5j)
     # plot_colormap(example_func, domain)
-    plot_3d_colormap(example_func, domain)
-    # plot_real_imag(example_func, (-10 - 10j, 10 + 10j))
+    # plot_3d_colormap(example_func, domain)
+    # plot_real_imag(example_func, domain)
     # plot_slice(example_func)
-    # plot_real_tube(example_func, domain, range)
+    plot_real_tube(example_func, domain, range)
